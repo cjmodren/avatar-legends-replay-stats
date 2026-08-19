@@ -323,9 +323,17 @@ addAliasBtn.addEventListener('click', () => {
   usernameRows.appendChild(row);
 });
 
+function normalizeWhitespace(s){
+  // Collapses any run of whitespace-like characters (regular space, non-breaking
+  // space, and other unicode space variants some platforms use) into a single
+  // normal space, so names with spaces match regardless of exactly which
+  // whitespace character was actually stored or typed.
+  return s.replace(/[\s\u00A0\u2000-\u200B\u202F\u205F\u3000]+/g, ' ').trim();
+}
+
 function getUsernames(){
   const inputs = Array.from(document.querySelectorAll('.unameInput'));
-  const raw = inputs.map(i => i.value.trim()).filter(Boolean);
+  const raw = inputs.map(i => normalizeWhitespace(i.value)).filter(Boolean);
   const seen = new Set();
   const out = [];
   raw.forEach(name => {
@@ -351,11 +359,19 @@ filesInput.addEventListener('change', e => handleFileList(e.target.files));
 
 function cleanName(raw){
   if(!raw) return '';
-  let s = raw.trim();
-  const idx = s.lastIndexOf('@@');
-  if(idx !== -1) s = s.slice(idx+2);
-  s = s.replace(/[^\x20-\x7E]/g,'').trim();
-  return s;
+  let s = raw;
+  const firstAt = s.indexOf('@@');
+  if(firstAt !== -1) s = s.slice(firstAt + 2);
+  // The game encodes each literal space in a name as a "\_@@" marker (confirmed from
+  // a name stored as "a\_@@plate\_@@of\_@@spaghetti" — actual name "a plate of spaghetti").
+  // The same marker also separates trailing icon/emoji decorations from the text
+  // portion of a name, where it likewise represents a space (e.g. "name\_@@✨💛" ->
+  // "name ✨💛"). Either way, replacing it with a real space reconstructs the name.
+  s = s.split('\\_@@').join(' ');
+  // Strip control characters only — keep all visible Unicode (accents, emoji, symbols)
+  // so names using them can still be typed and matched.
+  s = s.replace(/[\x00-\x1F\x7F]/g, '');
+  return normalizeWhitespace(s);
 }
 
 const CHAR_NAME_OVERRIDES = {
@@ -494,14 +510,14 @@ analyzeBtn.addEventListener('click', async () => {
 opponentInput.addEventListener('input', renderAll);
 
 function renderAll(){
-  const opponentFilter = opponentInput.value.trim().toLowerCase();
+  const opponentFilter = normalizeWhitespace(opponentInput.value).toLowerCase();
 
   const filtered = allMatches.filter(m => {
     if(opponentFilter && m.oppName.toLowerCase() !== opponentFilter) return false;
     return true;
   });
 
-  document.getElementById('filterHeading').innerHTML = 'Showing <b>' + filtered.length + '</b> match' + (filtered.length===1?'':'es') + ' &middot; ' + (opponentFilter ? ('vs <b>' + escapeHtml(opponentInput.value.trim()) + '</b>') : 'all opponents');
+  document.getElementById('filterHeading').innerHTML = 'Showing <b>' + filtered.length + '</b> match' + (filtered.length===1?'':'es') + ' &middot; ' + (opponentFilter ? ('vs <b>' + escapeHtml(normalizeWhitespace(opponentInput.value)) + '</b>') : 'all opponents');
 
   const stats = {};
   filtered.forEach(m => {
@@ -560,7 +576,7 @@ function renderStats(stats, totalFiltered, opponentFilter, filtered){
     const p = document.createElement('p');
     p.className = 'empty';
     p.textContent = opponentFilter
-      ? 'No matches found against "' + opponentInput.value.trim() + '" with the current filters.'
+      ? 'No matches found against "' + normalizeWhitespace(opponentInput.value) + '" with the current filters.'
       : 'No matches found for the tracked username(s) in the selected replays. Check the spelling and make sure the folder contains .dlr files from matches they played in.';
     charListEl.appendChild(p);
   } else {
