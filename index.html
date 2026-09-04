@@ -282,6 +282,15 @@ details ul{margin:10px 0 0; padding-left:18px;}
         <label for="opponentInput">Opponent name</label>
         <input type="text" id="opponentInput" placeholder="Leave blank to include all opponents">
       </div>
+      <div class="field" style="margin-bottom:0; margin-top:18px;">
+        <label for="modeSelect">Match type</label>
+        <select id="modeSelect">
+          <option value="all">All matches</option>
+          <option value="ranked">Ranked only</option>
+          <option value="casual">Casual only</option>
+        </select>
+        <div class="help" id="modeHelp"></div>
+      </div>
     </div>
 
     <p class="filterhead" id="filterHeading">Showing <b>all tracked matches</b></p>
@@ -310,6 +319,8 @@ const statusEl = document.getElementById('status');
 const usernameRows = document.getElementById('usernameRows');
 const addAliasBtn = document.getElementById('addAlias');
 const opponentInput = document.getElementById('opponentInput');
+const modeSelect = document.getElementById('modeSelect');
+const modeHelp = document.getElementById('modeHelp');
 let expandedChars = new Map();
 
 document.getElementById('pickFolder').addEventListener('click', () => folderInput.click());
@@ -437,12 +448,17 @@ async function parseFile(file){
   const p1Char = (text.match(/(?:^|\n)P1\s*=\s*([^\r\n]+)/)||[])[1];
   const p2Char = (text.match(/(?:^|\n)P2\s*=\s*([^\r\n]+)/)||[])[1];
   const winnerRaw = (text.match(/ReplayInfo_Winner\s*=\s*(\d+)/)||[])[1];
+  // Added with the Sept 2026 Ranked Mode update — absent from any replay saved before that
+  // patch, since ranked mode (as distinct from casual matchmaking) didn't exist yet.
+  const casualRaw = (text.match(/UseCasualMode\s*=\s*(\d+)/)||[])[1];
   return {
     p1Name: cleanName(p1NameRaw),
     p2Name: cleanName(p2NameRaw),
     p1Char: p1Char ? p1Char.trim() : null,
     p2Char: p2Char ? p2Char.trim() : null,
     winner: winnerRaw ? parseInt(winnerRaw,10) : null,
+    // true = casual, false = ranked, null = pre-Ranked-Mode replay (field not present)
+    isCasual: casualRaw === undefined ? null : casualRaw === '1',
     fileName: file.name
   };
 }
@@ -496,6 +512,7 @@ analyzeBtn.addEventListener('click', async () => {
       oppName: slot === 1 ? parsed.p2Name : parsed.p1Name,
       oppChar: normChar(slot === 1 ? parsed.p2Char : parsed.p1Char),
       win: win,
+      isCasual: parsed.isCasual,
       fileName: parsed.fileName
     });
   }
@@ -508,16 +525,31 @@ analyzeBtn.addEventListener('click', async () => {
 });
 
 opponentInput.addEventListener('input', renderAll);
+modeSelect.addEventListener('change', renderAll);
+
+function updateModeHelp(){
+  if(modeSelect.value === 'ranked'){
+    modeHelp.textContent = 'Only includes replays saved after the Ranked Mode update — older replays predate that distinction and won\'t show up here.';
+  } else if(modeSelect.value === 'casual'){
+    modeHelp.textContent = 'Includes casual matches plus any replay saved before the Ranked Mode update, since those predate the ranked/casual split.';
+  } else {
+    modeHelp.textContent = '';
+  }
+}
 
 function renderAll(){
   const opponentFilter = normalizeWhitespace(opponentInput.value).toLowerCase();
+  const modeFilter = modeSelect.value;
+  updateModeHelp();
 
   const filtered = allMatches.filter(m => {
     if(opponentFilter && m.oppName.toLowerCase() !== opponentFilter) return false;
+    if(modeFilter === 'ranked' && m.isCasual !== false) return false;
+    if(modeFilter === 'casual' && m.isCasual === false) return false;
     return true;
   });
 
-  document.getElementById('filterHeading').innerHTML = 'Showing <b>' + filtered.length + '</b> match' + (filtered.length===1?'':'es') + ' &middot; ' + (opponentFilter ? ('vs <b>' + escapeHtml(normalizeWhitespace(opponentInput.value)) + '</b>') : 'all opponents');
+  document.getElementById('filterHeading').innerHTML = 'Showing <b>' + filtered.length + '</b> match' + (filtered.length===1?'':'es') + ' &middot; ' + (opponentFilter ? ('vs <b>' + escapeHtml(normalizeWhitespace(opponentInput.value)) + '</b>') : 'all opponents') + (modeFilter !== 'all' ? (' &middot; <b>' + (modeFilter === 'ranked' ? 'Ranked' : 'Casual') + ' only</b>') : '');
 
   const stats = {};
   filtered.forEach(m => {
