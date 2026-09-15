@@ -235,6 +235,15 @@ details summary{cursor:pointer; font-family:'IBM Plex Mono',monospace;}
 details ul{margin:10px 0 0; padding-left:18px;}
 
 .note{font-size:12px; color:var(--text-muted); margin-top:32px; line-height:1.6;}
+
+.usernameDetails{margin-bottom:22px; font-size:13px; color:var(--text-muted);}
+.usernameDetails summary{
+  cursor:pointer;
+  font-family:'IBM Plex Mono',monospace;
+  font-size:13px;
+  color:var(--gold);
+}
+.usernameDetails summary:hover{text-decoration:underline;}
 </style>
 </head>
 <body>
@@ -250,15 +259,6 @@ details ul{margin:10px 0 0; padding-left:18px;}
 
   <div class="card">
     <div class="field">
-      <label>Usernames to track</label>
-      <div id="usernameRows">
-        <div class="urow"><input type="text" class="unameInput" placeholder="Enter your Steam display name."></div>
-      </div>
-      <button type="button" class="linklike" id="addAlias">+ Add another username</button>
-      <div class="help">If you've played under more than one name, add each one — matches under any of them count toward the same record.</div>
-    </div>
-
-    <div class="field">
       <label>Replay folder</label>
       <div class="help" style="margin-top:0; margin-bottom:10px;">Usually found at <code>steamapps/common/Avatar Legends The Fighting Game/replays</code>.</div>
       <div class="btnrow">
@@ -270,13 +270,43 @@ details ul{margin:10px 0 0; padding-left:18px;}
       <input type="file" id="filesInput" accept=".dlr" multiple style="display:none">
     </div>
 
-    <div class="btnrow">
+    <div class="field">
+      <label>Log folder (optional, but recommended)</label>
+      <div class="help" style="margin-top:0; margin-bottom:10px;">Pointing this at your <code>abare_log_*.txt</code> folder lets the tool confirm — rather than guess — which matches actually counted for Ranked points, since the queue you entered isn't always the same as whether a given match was scored.</div>
+      <div class="btnrow">
+        <button id="pickLogFolder">Choose log folder</button>
+        <button id="pickLogFiles">Choose .txt files instead</button>
+        <span class="filecount" id="logFileCount"></span>
+      </div>
+      <input type="file" id="logFolderInput" webkitdirectory directory multiple style="display:none">
+      <input type="file" id="logFilesInput" accept=".txt" multiple style="display:none">
+    </div>
+
+    <details class="usernameDetails">
+      <summary>Track a specific or additional username (optional)</summary>
+      <div class="field" style="margin-top:16px; margin-bottom:0;">
+        <div class="help" style="margin-top:0; margin-bottom:10px;">By default this tool detects which name is yours automatically — it's whichever name shows up in the most replays, since that's you far more often than any one opponent. Only fill this in if you've played under more than one name, or the auto-detection picks the wrong person.</div>
+        <div id="usernameRows">
+          <div class="urow"><input type="text" class="unameInput" placeholder="Enter your Steam display name."></div>
+        </div>
+        <button type="button" class="linklike" id="addAlias">+ Add another username</button>
+      </div>
+    </details>
+
+    <div class="btnrow" style="margin-top:22px;">
       <button class="primary" id="analyzeBtn" disabled>Analyze replays</button>
     </div>
     <div class="status" id="status"></div>
   </div>
 
   <div id="results">
+    <div class="card filters" id="detectedUserCard" style="display:none;">
+      <div class="field" style="margin-bottom:0;">
+        <label>Tracking</label>
+        <div id="detectedUserLine" style="font-size:15px;"></div>
+      </div>
+    </div>
+
     <div class="card filters">
       <div class="field" style="margin-bottom:0;">
         <label for="opponentInput">Opponent name</label>
@@ -314,6 +344,9 @@ let parseMeta = { total:0, noUser:0, noWinner:0, parseFail:0, detailNotes:[] };
 const folderInput = document.getElementById('folderInput');
 const filesInput = document.getElementById('filesInput');
 const fileCountEl = document.getElementById('fileCount');
+const logFolderInput = document.getElementById('logFolderInput');
+const logFilesInput = document.getElementById('logFilesInput');
+const logFileCountEl = document.getElementById('logFileCount');
 const analyzeBtn = document.getElementById('analyzeBtn');
 const statusEl = document.getElementById('status');
 const usernameRows = document.getElementById('usernameRows');
@@ -321,10 +354,17 @@ const addAliasBtn = document.getElementById('addAlias');
 const opponentInput = document.getElementById('opponentInput');
 const modeSelect = document.getElementById('modeSelect');
 const modeHelp = document.getElementById('modeHelp');
+const detectedUserCard = document.getElementById('detectedUserCard');
+const detectedUserLine = document.getElementById('detectedUserLine');
 let expandedChars = new Map();
+let selectedLogFiles = [];
+let rankedMeta = { hasLogData: false, confirmedRanked: 0, downgradedFromRanked: 0 };
+let detectedUsernames = []; // auto-detected, used when no manual username is entered
 
 document.getElementById('pickFolder').addEventListener('click', () => folderInput.click());
 document.getElementById('pickFiles').addEventListener('click', () => filesInput.click());
+document.getElementById('pickLogFolder').addEventListener('click', () => logFolderInput.click());
+document.getElementById('pickLogFiles').addEventListener('click', () => logFilesInput.click());
 
 addAliasBtn.addEventListener('click', () => {
   const row = document.createElement('div');
@@ -365,8 +405,18 @@ function handleFileList(fileList){
   statusEl.className = 'status';
 }
 
+function handleLogFileList(fileList){
+  const all = Array.from(fileList);
+  selectedLogFiles = all.filter(f => f.name.toLowerCase().endsWith('.txt'));
+  logFileCountEl.textContent = selectedLogFiles.length
+    ? selectedLogFiles.length + ' .txt file' + (selectedLogFiles.length===1?'':'s') + ' found'
+    : (all.length ? 'no .txt files in that selection' : '');
+}
+
 folderInput.addEventListener('change', e => handleFileList(e.target.files));
 filesInput.addEventListener('change', e => handleFileList(e.target.files));
+logFolderInput.addEventListener('change', e => handleLogFileList(e.target.files));
+logFilesInput.addEventListener('change', e => handleLogFileList(e.target.files));
 
 function cleanName(raw){
   if(!raw) return '';
@@ -441,6 +491,8 @@ function formatCharName(id){
   }).join(' ');
 }
 
+const REPLAY_FILENAME_RE = /^(\d{4})-(\d{2})-(\d{2})[ _](\d{2})-(\d{2})-(\d{2})/;
+
 async function parseFile(file){
   const text = await file.text();
   const p1NameRaw = (text.match(/ReplayInfo_P1Name\s*=\s*([^\r\n]+)/)||[])[1];
@@ -450,39 +502,98 @@ async function parseFile(file){
   const winnerRaw = (text.match(/ReplayInfo_Winner\s*=\s*(\d+)/)||[])[1];
   // Added with the Sept 2026 Ranked Mode update — absent from any replay saved before that
   // patch, since ranked mode (as distinct from casual matchmaking) didn't exist yet.
+  // NOTE: this only reflects which queue was entered, not whether this specific match's
+  // result was actually scored — a post-set rematch can still show 0 (ranked queue) even
+  // though it no longer counts. See the log cross-reference in the analyze handler below,
+  // which is the more reliable signal when a log folder is provided.
   const casualRaw = (text.match(/UseCasualMode\s*=\s*(\d+)/)||[])[1];
+
+  const fm = file.name.match(REPLAY_FILENAME_RE);
+  let date = null;
+  if(fm){
+    const iso = fm[1]+'-'+fm[2]+'-'+fm[3]+'T'+fm[4]+':'+fm[5]+':'+fm[6]+'Z';
+    const dt = new Date(iso);
+    if(!isNaN(dt.getTime())) date = dt;
+  }
+
   return {
     p1Name: cleanName(p1NameRaw),
     p2Name: cleanName(p2NameRaw),
     p1Char: p1Char ? p1Char.trim() : null,
     p2Char: p2Char ? p2Char.trim() : null,
     winner: winnerRaw ? parseInt(winnerRaw,10) : null,
-    // true = casual, false = ranked, null = pre-Ranked-Mode replay (field not present)
+    // true = casual, false = ranked queue (see note above), null = pre-Ranked-Mode replay
     isCasual: casualRaw === undefined ? null : casualRaw === '1',
+    date: date,
     fileName: file.name
   };
 }
 
-analyzeBtn.addEventListener('click', async () => {
-  const usernames = getUsernames();
-  if(usernames.length === 0){
-    statusEl.textContent = 'Enter at least one username to track.';
-    statusEl.className = 'status error';
-    return;
+// --- Optional log cross-reference, for confirming which "ranked queue" matches actually
+// counted. Same MMR recompute line used in the Rating Tracker: it only fires when a
+// match's result is genuinely submitted, so a ranked-queue replay with no matching
+// recompute nearby almost certainly didn't count (e.g. a post-set rematch).
+const DATE_MARKER_RE = /\[(\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2} UTC\]/g;
+const MMR_RECOMPUTE_RE = /\[(\d{2}:\d{2}:\d{2})\]\s*\[MMR\] Character rating recompute:\s*(\S+)\s+-?\d+\/rd\d+\s*->\s*-?\d+\/rd\d+\s*\([+-]\d+\)\s*vs\s*(\S+)\s+-?\d+\/rd\d+\s*->\s*-?\d+\/rd\d+/g;
+
+function resolveDate(idx, markers){
+  let date = null;
+  for(const marker of markers){
+    if(marker.index <= idx) date = marker.date;
+    else break;
   }
+  if(date === null && markers.length) date = markers[0].date;
+  return date;
+}
+
+async function parseLogForMMREvents(file){
+  const text = await file.text();
+  const markers = [];
+  let dm;
+  DATE_MARKER_RE.lastIndex = 0;
+  while((dm = DATE_MARKER_RE.exec(text)) !== null) markers.push({ index: dm.index, date: dm[1] });
+
+  const events = [];
+  let rm;
+  MMR_RECOMPUTE_RE.lastIndex = 0;
+  while((rm = MMR_RECOMPUTE_RE.exec(text)) !== null){
+    const date = resolveDate(rm.index, markers);
+    if(date === null) continue;
+    const dt = new Date(date + 'T' + rm[1] + 'Z');
+    if(isNaN(dt.getTime())) continue;
+    events.push({ time: dt, char1: rm[2].toLowerCase(), char2: rm[3].toLowerCase() });
+  }
+  return events;
+}
+
+// Was there an MMR recompute for this exact character pair within a few seconds of
+// the replay's own timestamp? A generous window since we're matching on the replay
+// filename's second-resolution timestamp against a possibly slightly-offset log entry.
+function hasMatchingMMREvent(mmrEvents, date, char1, char2){
+  if(!date) return false;
+  const c1 = (char1||'').toLowerCase(), c2 = (char2||'').toLowerCase();
+  const windowMs = 5000;
+  return mmrEvents.some(ev => {
+    if(Math.abs(ev.time.getTime() - date.getTime()) > windowMs) return false;
+    return (ev.char1 === c1 && ev.char2 === c2) || (ev.char1 === c2 && ev.char2 === c1);
+  });
+}
+
+analyzeBtn.addEventListener('click', async () => {
   if(selectedFiles.length === 0) return;
 
   analyzeBtn.disabled = true;
   document.getElementById('results').style.display = 'none';
   statusEl.className = 'status';
 
-  const usernamesLower = usernames.map(u => u.toLowerCase());
-  allMatches = [];
+  // Phase 1: parse every replay first, before we know who "you" are — auto-detection
+  // needs to see all the names before picking the most common one.
+  const parsedReplays = [];
   const meta = { total: selectedFiles.length, noUser:0, noWinner:0, parseFail:0, detailNotes:[] };
 
   for(let i=0;i<selectedFiles.length;i++){
     const file = selectedFiles[i];
-    statusEl.textContent = 'Reading ' + (i+1) + ' / ' + selectedFiles.length + '…';
+    statusEl.textContent = 'Reading replay ' + (i+1) + ' / ' + selectedFiles.length + '…';
     let parsed;
     try{
       parsed = await parseFile(file);
@@ -496,42 +607,120 @@ analyzeBtn.addEventListener('click', async () => {
       meta.detailNotes.push(file.name + ': no player names found');
       continue;
     }
+    parsedReplays.push(parsed);
+  }
+
+  // Phase 2: optional log cross-reference for ranked-status accuracy.
+  let mmrEvents = [];
+  if(selectedLogFiles.length){
+    statusEl.textContent = 'Reading logs for ranked-match confirmation…';
+    for(const file of selectedLogFiles){
+      try{
+        const events = await parseLogForMMREvents(file);
+        mmrEvents = mmrEvents.concat(events);
+      }catch(err){ /* skip unreadable log files silently — this input is optional */ }
+    }
+  }
+  rankedMeta = { hasLogData: mmrEvents.length > 0, confirmedRanked: 0, downgradedFromRanked: 0 };
+
+  // Phase 3: figure out who "you" are — manual entries win if present, otherwise
+  // auto-detect from whichever name appears in the most replays.
+  const manualUsernames = getUsernames();
+  let usernamesLower;
+  detectedUsernames = [];
+  if(manualUsernames.length){
+    usernamesLower = manualUsernames.map(u => u.toLowerCase());
+  } else {
+    const counts = {};
+    parsedReplays.forEach(p => {
+      [p.p1Name, p.p2Name].forEach(n => {
+        if(!n) return;
+        const key = n.toLowerCase();
+        if(!counts[key]) counts[key] = { name: n, count: 0 };
+        counts[key].count++;
+      });
+    });
+    const ranked = Object.values(counts).sort((a,b) => b.count - a.count);
+    if(ranked.length){
+      detectedUsernames = [ranked[0]];
+      usernamesLower = [ranked[0].name.toLowerCase()];
+    } else {
+      usernamesLower = [];
+    }
+  }
+
+  if(usernamesLower.length === 0){
+    statusEl.textContent = 'Couldn\'t detect a username automatically — enter one manually below.';
+    statusEl.className = 'status error';
+    analyzeBtn.disabled = false;
+    return;
+  }
+
+  // Phase 4: build match records, refining ranked status via the log cross-reference
+  // where we have one.
+  allMatches = [];
+  parsedReplays.forEach(parsed => {
     let slot = null;
     if(usernamesLower.includes(parsed.p1Name.toLowerCase())) slot = 1;
     else if(usernamesLower.includes(parsed.p2Name.toLowerCase())) slot = 2;
-    if(slot === null){ meta.noUser++; continue; }
+    if(slot === null){ meta.noUser++; return; }
     if(parsed.winner !== 1 && parsed.winner !== 2){
       meta.noWinner++;
-      meta.detailNotes.push(file.name + ': no decisive winner recorded');
-      continue;
+      meta.detailNotes.push(parsed.fileName + ': no decisive winner recorded');
+      return;
     }
     const win = parsed.winner === slot;
+
+    let isCasual = parsed.isCasual;
+    if(isCasual === false && rankedMeta.hasLogData){
+      const matched = hasMatchingMMREvent(mmrEvents, parsed.date, parsed.p1Char, parsed.p2Char);
+      if(matched){
+        rankedMeta.confirmedRanked++;
+      } else {
+        isCasual = true; // was in ranked queue, but no scored result found nearby — didn't count
+        rankedMeta.downgradedFromRanked++;
+      }
+    }
+
     allMatches.push({
       yourName: slot === 1 ? parsed.p1Name : parsed.p2Name,
       yourChar: normChar(slot === 1 ? parsed.p1Char : parsed.p2Char),
       oppName: slot === 1 ? parsed.p2Name : parsed.p1Name,
       oppChar: normChar(slot === 1 ? parsed.p2Char : parsed.p1Char),
       win: win,
-      isCasual: parsed.isCasual,
+      isCasual: isCasual,
       fileName: parsed.fileName
     });
-  }
+  });
 
   parseMeta = meta;
   opponentInput.value = '';
   expandedChars = new Map();
+  renderDetectedUserBanner();
   renderAll();
   analyzeBtn.disabled = false;
 });
+
+function renderDetectedUserBanner(){
+  if(detectedUsernames.length === 0){
+    detectedUserCard.style.display = 'none';
+    return;
+  }
+  const d = detectedUsernames[0];
+  detectedUserCard.style.display = 'block';
+  detectedUserLine.innerHTML = '<b>' + escapeHtml(d.name) + '</b> <span style="color:var(--text-muted); font-family:\'IBM Plex Mono\',monospace; font-size:13px;">— auto-detected, appears in ' + d.count + ' of ' + parseMeta.total + ' replays</span>';
+}
 
 opponentInput.addEventListener('input', renderAll);
 modeSelect.addEventListener('change', renderAll);
 
 function updateModeHelp(){
   if(modeSelect.value === 'ranked'){
-    modeHelp.textContent = 'Only includes replays saved after the Ranked Mode update — older replays predate that distinction and won\'t show up here.';
+    modeHelp.textContent = rankedMeta.hasLogData
+      ? 'Confirmed against your logs: ' + rankedMeta.confirmedRanked + ' match(es) had a matching scored result; ' + rankedMeta.downgradedFromRanked + ' were in the ranked queue but didn\'t actually count and are excluded. Older, pre-update replays aren\'t included either way.'
+      : 'Based only on which queue was entered (no log folder provided) — a match that was queued as ranked but didn\'t end up counting (e.g. a post-set rematch) can\'t be told apart from one that did. Add your log folder above for an accurate count.';
   } else if(modeSelect.value === 'casual'){
-    modeHelp.textContent = 'Includes casual matches plus any replay saved before the Ranked Mode update, since those predate the ranked/casual split.';
+    modeHelp.textContent = 'Includes casual matches, any ranked-queue match that didn\'t actually count (when log data is available to tell), and any replay saved before the Ranked Mode update.';
   } else {
     modeHelp.textContent = '';
   }
@@ -570,7 +759,10 @@ function renderAll(){
     parseMeta.noUser + ' replay' + (parseMeta.noUser===1?'':'s') + ' did not include a tracked username',
     parseMeta.noWinner + ' replay' + (parseMeta.noWinner===1?'':'s') + ' had no decisive winner recorded',
     parseMeta.parseFail + ' replay' + (parseMeta.parseFail===1?'':'s') + ' could not be read'
-  ].forEach(line => {
+  ].concat(rankedMeta.hasLogData ? [
+    rankedMeta.confirmedRanked + ' ranked-queue match(es) confirmed as actually scored, against your logs',
+    rankedMeta.downgradedFromRanked + ' ranked-queue match(es) had no matching scored result in your logs, so they\'re treated as not counted (e.g. post-set rematches)'
+  ] : []).forEach(line => {
     const li = document.createElement('li');
     li.textContent = line;
     detailsList.appendChild(li);
