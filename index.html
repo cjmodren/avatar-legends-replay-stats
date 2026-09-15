@@ -533,8 +533,11 @@ async function parseFile(file){
 // counted. Same MMR recompute line used in the Rating Tracker: it only fires when a
 // match's result is genuinely submitted, so a ranked-queue replay with no matching
 // recompute nearby almost certainly didn't count (e.g. a post-set rematch).
+// NEW (Sept 2026): "dead game" matches still fire a recompute but are explicitly tagged:
+//   [MMR] Character rating recompute: Aang X/rdN -> X/rdN (+0) vs ... [dead game: set scoring over]
+// The delta is always +0 and the tag is always present, so we can detect these precisely.
 const DATE_MARKER_RE = /\[(\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2} UTC\]/g;
-const MMR_RECOMPUTE_RE = /\[(\d{2}:\d{2}:\d{2})\]\s*\[MMR\] Character rating recompute:\s*(\S+)\s+-?\d+\/rd\d+\s*->\s*-?\d+\/rd\d+\s*\([+-]\d+\)\s*vs\s*(\S+)\s+-?\d+\/rd\d+\s*->\s*-?\d+\/rd\d+/g;
+const MMR_RECOMPUTE_RE = /\[(\d{2}:\d{2}:\d{2})\]\s*\[MMR\] Character rating recompute:\s*(\S+)\s+-?\d+\/rd\d+\s*->\s*-?\d+\/rd\d+\s*\(([+-]\d+)\)\s*vs\s*(\S+)\s+-?\d+\/rd\d+\s*->\s*-?\d+\/rd\d+([^\r\n]*)/g;
 
 function resolveDate(idx, markers){
   let date = null;
@@ -561,22 +564,28 @@ async function parseLogForMMREvents(file){
     if(date === null) continue;
     const dt = new Date(date + 'T' + rm[1] + 'Z');
     if(isNaN(dt.getTime())) continue;
-    events.push({ time: dt, char1: rm[2].toLowerCase(), char2: rm[3].toLowerCase() });
+    const delta = parseInt(rm[3], 10);
+    const tail = rm[5] || '';
+    const isDeadGame = tail.includes('dead game') || (delta === 0 && tail.includes('set scoring over'));
+    events.push({ time: dt, char1: rm[2].toLowerCase(), char2: rm[4].toLowerCase(), isDeadGame });
   }
   return events;
 }
 
-// Was there an MMR recompute for this exact character pair within a few seconds of
-// the replay's own timestamp? A generous window since we're matching on the replay
-// filename's second-resolution timestamp against a possibly slightly-offset log entry.
-function hasMatchingMMREvent(mmrEvents, date, char1, char2){
-  if(!date) return false;
+// Returns:
+//   'scored'   — matched a recompute event that changed ratings (definitely counted)
+//   'deadgame' — matched a recompute event explicitly tagged [dead game: set scoring over]
+//   'nomatch'  — no recompute event found near this replay (either no log data, or pre-update)
+function matchMMREvent(mmrEvents, date, char1, char2){
+  if(!date || mmrEvents.length === 0) return 'nomatch';
   const c1 = (char1||'').toLowerCase(), c2 = (char2||'').toLowerCase();
   const windowMs = 5000;
-  return mmrEvents.some(ev => {
+  const hit = mmrEvents.find(ev => {
     if(Math.abs(ev.time.getTime() - date.getTime()) > windowMs) return false;
     return (ev.char1 === c1 && ev.char2 === c2) || (ev.char1 === c2 && ev.char2 === c1);
   });
+  if(!hit) return 'nomatch';
+  return hit.isDeadGame ? 'deadgame' : 'scored';
 }
 
 analyzeBtn.addEventListener('click', async () => {
@@ -673,12 +682,18 @@ analyzeBtn.addEventListener('click', async () => {
 
     let isCasual = parsed.isCasual;
     if(isCasual === false && rankedMeta.hasLogData){
-      const matched = hasMatchingMMREvent(mmrEvents, parsed.date, parsed.p1Char, parsed.p2Char);
-      if(matched){
+      const result = matchMMREvent(mmrEvents, parsed.date, parsed.p1Char, parsed.p2Char);
+      if(result === 'scored'){
         rankedMeta.confirmedRanked++;
-      } else {
-        isCasual = true; // was in ranked queue, but no scored result found nearby — didn't count
+        // isCasual stays false — this genuinely counted
+      } else if(result === 'deadgame'){
+        isCasual = true; // in ranked queue, but dead game — didn't affect MMR
         rankedMeta.downgradedFromRanked++;
+      } else {
+        // 'nomatch' — log provided but no event found near this timestamp.
+        // Could be a mirror match (can't tell apart in log), a match from before
+        // the log period, or a genuine miss. Leave isCasual as-is (false) rather
+        // than wrongly marking it casual, since absence of evidence isn't evidence.
       }
     }
 
